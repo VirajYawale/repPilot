@@ -1,21 +1,89 @@
+
 services:
+
+  # PostgreSQL Database
   postgres:
     image: pgvector/pgvector:pg16
     container_name: repopilot-postgres
     environment:
       POSTGRES_DB: repopilot
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5433:5432"
     volumes:
       - repopilot_pg_data:/var/lib/postgresql/data
-      - ./docker/postgres/init-extensions.sql:/docker-entrypoint-intitdb.d/01-extensions.sql:ro
+      - ./docker/postgres/init-extensions.sql:/docker-entrypoint-initdb.d/01-extensions.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d repopilot"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+    restart: unless-stopped
+
+  # Ollama LLM
+  ollama:
+    image: ollama/ollama:latest
+    container_name: repopilot-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
+  # Spring Boot Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: repopilot-backend
+    environment:
+      SERVER_PORT: 8080
+
+      DB_URL: jdbc:postgresql://postgres:5432/repopilot
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      SPRING_AI_OLLAMA_BASE_URL: http://ollama:11434
+
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+
+      ENCRYPTOR_PASSWORD: ${ENCRYPTOR_PASSWORD}
+      ENCRYPTOR_SALT: ${ENCRYPTOR_SALT}
+
+      APP_FRONTEND_URL: http://localhost:3000
+      APP_CORS_ALLOWED_ORIGINS: http://localhost:3000
+
+    ports:
+      - "8080:8080"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+    restart: unless-stopped
+
+  # Next.js Frontend
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+
+    container_name: repopilot-client
+
+    ports:
+      - "3000:3000"
+
+    depends_on:
+      - backend
+
+    restart: unless-stopped
 
 volumes:
   repopilot_pg_data:
+  ollama_data:
